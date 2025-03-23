@@ -5,24 +5,12 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from collections import deque
-from envs.gomoku_env import GomokuEnv
-
-class DQNNetwork(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super(DQNNetwork, self).__init__()
-        self.fc1 = nn.Linear(input_dim, 128)
-        self.fc2 = nn.Linear(128, 128)
-        self.fc3 = nn.Linear(128, output_dim)
-    
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
-
+from replay_buffers.replay_buffer import ReplayBuffer
+from models.dqn import DQN as DQNNetwork
+import os
 
 class DQN:
-    def __init__(self, env, lr=0.001, gamma=0.99, epsilon=0.1, buffer_size=10000, batch_size=64):
+    def __init__(self, env, lr=0.001, gamma=0.99, epsilon=0.1, buffer_size=10000, batch_size=32, name="DQN-Agent"):
         self.env = env
         self.lr = lr
         self.gamma = gamma
@@ -36,7 +24,9 @@ class DQN:
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.criterion = nn.MSELoss()
         self.replay_buffer = ReplayBuffer(buffer_size)
-        self.name = "DQN-Agent"
+        self.name = name
+        self.checkpoint_dir = "checkpoint"
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
         
     def select_action(self, state):
         if random.random() < self.epsilon:
@@ -50,15 +40,14 @@ class DQN:
         if len(self.replay_buffer) < self.batch_size:
             return
         
-        batch = self.replay_buffer.sample(self.batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
+        states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size)
         
-        states = torch.tensor(np.array(states).reshape(self.batch_size, -1), dtype=torch.float, device=self.device)
+        states = torch.tensor(states, dtype=torch.float, device=self.device)
+        next_states = torch.tensor(next_states, dtype=torch.float, device=self.device)
         actions = torch.tensor(actions, device=self.device)
         rewards = torch.tensor(rewards, dtype=torch.float, device=self.device)
-        next_states = torch.tensor(np.array(next_states).reshape(self.batch_size, -1), dtype=torch.float, device=self.device)
         dones = torch.tensor(dones, dtype=torch.float, device=self.device)
-        
+        # print*("States: ", states.shape)
         q_values = self.model(states)
         next_q_values = self.model(next_states).detach()
         target_q_values = rewards + (1 - dones) * self.gamma * torch.max(next_q_values, dim=1)[0]
@@ -69,53 +58,19 @@ class DQN:
         loss.backward()
         self.optimizer.step()
     
-    def train(self, episodes=100):
-        rewards = []
-        plt.ion()
-        fig, ax = plt.subplots()
-        
-        for episode in range(episodes):
-            state, _ = self.env.reset()
-            done = False
-            total_reward = 0
-            move_count = 0
-            
-            while not done and move_count < self.env.rows * self.env.cols:
-                action = self.select_action(state)
-                next_state, reward, done, _, _ = self.env.step(action)
-                self.replay_buffer.push(state, action, reward, next_state, done)
-                self.train_step()
-                state = next_state
-                total_reward += reward
-                move_count += 1
-            
-            rewards.append(total_reward)
-            ax.clear()
-            ax.plot(rewards, label=f'Total Reward per Episode - {self.name}')
-            ax.set_xlabel('Episode')
-            ax.set_ylabel('Total Reward')
-            ax.legend()
-            plt.pause(0.01)
-            
-            print(f"Episode {episode + 1}: Total Reward: {total_reward}")
-        
-        plt.ioff()
-        plt.show()
-    
-    def play(self):
-        state, _ = self.env.reset()
-        done = False
-        while not done:
-            action = self.select_action(state)
-            state, _, done, _, _ = self.env.step(action)
-            self.env.render()
-
-    def save_model(self, path):
+    def save_model(self):
+        path = os.path.join(self.checkpoint_dir, f"{self.name}.pth")
         torch.save(self.model.state_dict(), path)
+        print(f"Model saved to {path}")
     
-    def load_model(self, path):
-        self.model.load_state_dict(torch.load(path))
-        self.model.eval()
+    def load_model(self):
+        path = os.path.join(self.checkpoint_dir, f"{self.name}.pth")
+        if os.path.exists(path):
+            self.model.load_state_dict(torch.load(path))
+            self.model.eval()
+            print(f"Model loaded from {path}")
+        else:
+            print("No saved model found.")
 
 # if __name__ == "__main__":
 #     env = GomokuEnv()
