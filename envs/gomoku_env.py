@@ -41,7 +41,7 @@ class GomokuEnv(gym.Env):
         reward = 5
         if self.board[row, col] != 0:
             print("Invalid move")
-            reward = -50
+            reward = -200
             return self.board.copy(), reward, True, False, {}
         
         self.board[row, col] = self.current_player
