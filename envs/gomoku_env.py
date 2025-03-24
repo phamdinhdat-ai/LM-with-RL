@@ -36,8 +36,8 @@ class GomokuEnv(gym.Env):
     
     def step(self, action):
         row, col = divmod(action, self.cols)
-        print("Row: ", row)
-        print("Col: ", col)
+        # print("Row: ", row)
+        # print("Col: ", col)
         reward = 5
         if self.board[row, col] != 0:
             print("Invalid move")
@@ -48,7 +48,7 @@ class GomokuEnv(gym.Env):
         done, winner = self.check_winner(row, col)
         
         if done:
-            reward = 100 if winner == self.current_player else -100
+            reward = 50 if winner == self.current_player else -100
             return self.board.copy(), reward, True, False, {}
         
         if np.all(self.board != 0):
@@ -60,17 +60,24 @@ class GomokuEnv(gym.Env):
             self.ai_move()
             done, winner = self.check_winner(row, col)
             if done:
-                reward = 100 if winner == self.current_player else -100
+                reward = 50 if winner == self.current_player else -100
                 return self.board.copy(), reward, True, False, {}
             
-        print("Reward: ", reward)
+        # print("Reward: ", reward)
         return self.board.copy(), reward, False, False, {}
     
     def ai_move(self):
         if self.drl_agent:
             state = self.board.copy()
-            action = self.drl_agent.predict(state)
+            action = self.drl_agent.select_action(state)
             row, col = divmod(action, self.cols)
+            # check if the move is valid
+            if self.board[row, col] != 0:
+                print("Invalid move")
+                empty_positions = np.argwhere(self.board == 0)
+                row, col = random.choice(empty_positions)
+                
+            
         else:
             empty_positions = np.argwhere(self.board == 0)
             if empty_positions.size > 0:
@@ -138,6 +145,4 @@ class GomokuEnv(gym.Env):
             self.render()
         pygame.quit()
 
-if __name__ == "__main__":
-    env = GomokuEnv(ai_opponent=True)
-    env.run_pvp()
+

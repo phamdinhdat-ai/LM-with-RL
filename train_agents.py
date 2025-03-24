@@ -89,7 +89,7 @@ if __name__ == "__main__":
     agent1.name = "Agent 1"
     agent2 = DQNAgent(env, epsilon=0.3)
     agent2.name = "Agent 2"
-    n_games = 30
+    n_games = 1000
     first_agent = 0
     learn_iters = 0
 
@@ -97,7 +97,7 @@ if __name__ == "__main__":
 
     # rewards = []
     # total_move_taken = 0
-    rewards, total_move_taken = train_agents(env, agent1, agent2, episodes=30)
+    rewards, total_move_taken = train_agents(env, agent1, agent2, episodes=n_games)
     plot_rewards(rewards, agent1.name, agent2.name)
     test_agents(env, agent1, agent2, episodes=10)
     

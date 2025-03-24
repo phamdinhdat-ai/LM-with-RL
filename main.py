@@ -1,23 +1,40 @@
 from envs.gomoku_env import GomokuEnv
+from agents.dqn import DQN as DQNAgent
+from agents.heuristic_agent import HeuristicAgent
 
-def test_env():
+
+
+
+
+
+def game_play():
     env = GomokuEnv(rows=15, cols=15, win_length=5)
+    agent = DQNAgent(env, epsilon=0.4)
+    agent.name = "Agent 1"
+    agent.load_model()
+    heuristic_agent = HeuristicAgent(env)
+    state, _ = env.reset()
+    done = False
+    while not done:
+        action = agent.select_action(state)
+        next_state, reward, done, _, _ = env.step(action)
+        env.render()
+        if done:
+            break
+        action = heuristic_agent.select_action(next_state)
+        next_state, reward, done, _, _ = env.step(action)
+        env.render()
+        if done:
+            break
+    print("Game over!")
     
-    obs, _ = env.reset()
-    assert obs.shape == (15, 15), "Observation shape mismatch"
-    
-    action = 0  # Place at top-left corner
-    obs, reward, done, _, _ = env.step(action)
-    assert obs[0, 0] == 1, "Player 1 move failed"
-    
-    action = 1  # Player 2 moves
-    obs, reward, done, _, _ = env.step(action)
-    assert obs[0, 1] == -1, "Player 2 move failed"
-    
-    print("Environment basic tests passed!")
-
-
     
 if __name__ == "__main__":
-    env = GomokuEnv(ai_opponent=True)
+    env = GomokuEnv(rows=15, cols=15, win_length=5)
+    agent = DQNAgent(env, epsilon=0.4)
+    agent.name = "Agent 1"
+    agent.load_model()
+    env.drl_agent = agent
+    env.ai_opponent = True
     env.run_pvp()
+    # game_play()
