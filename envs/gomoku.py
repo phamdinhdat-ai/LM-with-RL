@@ -1,354 +1,199 @@
-import itertools
-import pygame
-import random
 import numpy as np
+import gymnasium as gym
+from gymnasium import spaces
+import pygame
+# import random
+# import torch
+# import torch.nn as nn
+# import torch.optim as optim
+# from torch.distributions import Categorical
+# from transformers import AutoTokenizer, AutoModelForSequenceClassification, AdamW
 
-class GomokuPosition:
-    dirs = (
-        ((0, -1), (0, 1)), 
-        ((1, 0), (-1, 0)),
-        ((1, 1), (-1, -1)),
-        ((1, -1), (-1, 1)),
-    )
+# --- Gomoku Environment (Provided in the prompt - slightly modified for compatibility) ---
+class GomokuEnv(gym.Env):
+    # (Keep the GomokuEnv class exactly as provided in the previous prompt)
+    # ... (rest of the GomokuEnv class code from the previous prompt) ...
+    # Important: Ensure the __init__ accepts rows, cols, win_length
+    def __init__(self, rows=15, cols=15, win_length=5, ai_opponent=False, drl_agent=None):
+        super(GomokuEnv, self).__init__()
 
-    def __init__(self, rows, cols, n_to_win, players="wb", blank="."):
-        self.ply = 0
         self.rows = rows
         self.cols = cols
-        self.last_move = None
-        self.n_to_win = n_to_win
-        self.boards = [[[0] * cols for _ in range(rows)] for i in range(2)]
-        self.players = players
-        self.blank = blank
+        self.win_length = win_length
+        # Note: ai_opponent and drl_agent args might not be directly used
+        # if the LLM agent plays against itself or a fixed opponent.
+        # Modify logic as needed for the specific training setup.
 
-    def board(self, row=None, col=None):
-        if row is None and col is None:
-            return self.boards[self.ply&1]
-        elif col is None:
-            return self.boards[self.ply&1][row]
+        self.action_space = spaces.Discrete(self.rows * self.cols)
+        # Observation space is the board, but the LLM agent will process a string version
+        self.observation_space = spaces.Box(low=-1, high=1, shape=(self.rows, self.cols), dtype=np.int8)
 
-        return self.boards[self.ply&1][row][col]
+        # self.reset() # Reset is called externally before training usually
+        self.board = np.zeros((self.rows, self.cols), dtype=np.int8)
+        self.current_player = 1
+        self.init_pygame() # Optional: Initialize pygame if rendering
 
-    def move(self, row, col):
-        if self.in_bounds(row, col) and self.is_empty(row, col):
-            self.board(row)[col] = 1
-            self.ply += 1
-            self.last_move = row, col
-            return True
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self.board = np.zeros((self.rows, self.cols), dtype=np.int8)
+        self.current_player = 1
+        # Return the initial board state and an empty info dict
+        return self.board.copy(), {}
 
-        return False
+    def actiton_to_position(self, action):
+        # Corrected logic: row is action // cols, col is action % cols
+        row = action // self.cols
+        col = action % self.cols
+        return row, col
 
-    def is_empty(self, row, col):
-        return not any(board[row][col] for board in self.boards)
+    def step(self, action):
+        row, col = self.actiton_to_position(action)
 
-    def in_bounds(self, y, x):
-        return y >= 0 and y < self.rows and x >= 0 and x < self.cols
+        # Basic reward, can be refined
+        reward = 0.1 # Small reward for surviving a step
 
-    def count_from_last_move(self, dy, dx):
-        if not self.last_move:
-            return 0
+        # Check for invalid move
+        if row < 0 or row >= self.rows or col < 0 or col >= self.cols or self.board[row, col] != 0:
+            # print(f"Invalid move attempted: Action {action} -> ({row}, {col}) by player {self.current_player}")
+            # print("Current board:\n", self.board)
+            reward = -1.0 # Penalize invalid moves heavily
+            # For REINFORCE, it might be better to end the episode on invalid move
+            # Or just give a large penalty and let the game continue if possible (though state doesn't change)
+            # Let's return done=True for invalid moves to simplify training loop
+            return self.board.copy(), reward, True, False, {"error": "Invalid move"}
 
-        last_board = self.boards[(self.ply-1)&1]
-        y, x = self.last_move
-        run = 0
 
-        while self.in_bounds(y, x) and last_board[y][x]:
-            run += 1
-            x += dx
-            y += dy
-        return run
+        # Place the piece
+        self.board[row, col] = self.current_player
 
-    def just_won(self):
-        return self.ply >= self.n_to_win * 2 - 1 and any(
-            (self.count_from_last_move(*x) + 
-             self.count_from_last_move(*y) - 1 >= self.n_to_win)
-            for x, y in self.dirs
-        )
-        
-    def is_draw(self):
-        return self.ply >= self.rows * self.cols and not self.just_won()
+        # Check for winner
+        done, winner = self.check_winner(row, col)
+        if done:
+            if winner == self.current_player:
+                reward = 1.0 # Win reward
+            # else: # Should not happen if check_winner is correct
+            #     reward = -1.0 # Lose reward (handled when opponent wins)
+            # print(f"Player {self.current_player} wins!")
+            return self.board.copy(), reward, True, False, {} # Terminated = True
 
-    def last_player(self):
-        if self.ply < 1:
-            raise IndexError("no moves have been made")
+        # Check for draw
+        if np.all(self.board != 0):
+            reward = 0.5 # Draw reward (better than losing)
+            # print("Draw!")
+            return self.board.copy(), reward, True, False, {} # Terminated = True
 
-        return self.players[(self.ply-1)&1]
+        # Switch player
+        self.current_player *= -1
 
-    def char_for_cell(self, row, col):
-        for i, char in enumerate(self.players):
-            if self.boards[i][row][col]:
-                # return char
+        # Opponent's turn (if applicable, e.g., playing against random or fixed AI)
+        # If training via self-play, the *next* call to step will be the opponent
+        # Let's assume for now the training loop handles alternating players
 
-                if char == 'w':
-                  return 1
+        # Game continues
+        # Truncated = False (no time limits here)
+        return self.board.copy(), reward, False, False, {}
+
+    def check_winner(self, row, col):
+        if not (0 <= row < self.rows and 0 <= col < self.cols):
+             return False, None # Should not happen if placement is valid
+
+        player = self.board[row, col]
+        if player == 0: # Cannot win from an empty cell check
+            return False, None
+
+        directions = [(1, 0), (0, 1), (1, 1), (1, -1)] # Horizontal, Vertical, Diag down-right, Diag down-left
+
+        for dr, dc in directions:
+            count = 1
+            # Check in positive direction
+            for i in range(1, self.win_length):
+                r, c = row + dr * i, col + dc * i
+                if 0 <= r < self.rows and 0 <= c < self.cols and self.board[r, c] == player:
+                    count += 1
                 else:
-                  return -1
-        
-        # return self.blank
-        return 0
+                    break
+            # Check in negative direction
+            for i in range(1, self.win_length):
+                r, c = row - dr * i, col - dc * i
+                if 0 <= r < self.rows and 0 <= c < self.cols and self.board[r, c] == player:
+                    count += 1
+                else:
+                    break
 
-    def to_grid(self):
-        return [
-            [self.char_for_cell(row, col) for col in range(self.cols)]
-            for row in range(self.rows)
-        ]
+            if count >= self.win_length:
+                return True, player
 
-    def __repr__(self):
-        return "\n".join([" ".join(row) for row in self.to_grid()])
+        return False, None # No winner found
 
-    def __str__(self):
-        return "\n".join([" ".join(row) for row in self.to_grid()])
-    
-
-    # NEW CODE
-
-
-
-# if __name__ == "__main__":
-#     pos = GomokuPosition(rows=4, cols=4, n_to_win=3)
-
-#     while not pos.just_won() and not pos.is_draw():self.boards
-#         print(pos, "\n")
-
-#         try:
-#             if not pos.move(*map(int, input("[row col] :: ").split())):
-#                 print("try again")
-#         except (ValueError, IndexError):
-#             print("try again")
-
-#     print(pos, "\n")
-        
-#     if pos.just_won():
-#         print(pos.last_player(), "won")
-#     else:
-#         print("draw")
+    # --- Pygame methods (optional, keep if needed) ---
+    def init_pygame(self):
+        try:
+            pygame.init()
+            self.cell_size = 30 # Smaller for potentially larger boards
+            screen_width = self.cols * self.cell_size
+            screen_height = self.rows * self.cell_size
+            # Check if display mode is possible, otherwise disable rendering
+            try:
+                self.screen = pygame.display.set_mode((screen_width, screen_height))
+                pygame.display.set_caption("Gomoku (LLM Agent Training)")
+                self.pygame_initialized = True
+            except pygame.error:
+                 print("Pygame display could not be initialized (maybe running headless). Rendering disabled.")
+                 self.pygame_initialized = False
+                 self.screen = None
+        except Exception as e:
+             print(f"Pygame initialization failed: {e}. Rendering disabled.")
+             self.pygame_initialized = False
+             self.screen = None
 
 
+    def render(self):
+        if not self.pygame_initialized or self.screen is None:
+            # print("Pygame not initialized or screen not available, cannot render.")
+            return
 
-class Colors:
-    BLACK = 0, 0, 0
-    WHITE = 255, 255, 255
-    BROWN = 205, 128, 0
+        if not pygame.display.get_init(): # Check if display is still usable
+             print("Pygame display lost. Cannot render.")
+             self.pygame_initialized = False
+             return
 
+        try:
+            self.screen.fill((200, 200, 200)) # Light gray background
 
-class Gomoku:
-    def __init__(
-        self,
-        size=60,
-        piece_size=20,
-        rows=15,
-        cols=15,
-        n_to_win=5,
-        caption="Gomoku"
-    ):
-        self.rows = rows
-        self.cols = cols
-        self.w = rows * size
-        self.h = cols * size
-        self.size = size
-        self.piece_size = piece_size
-        self.half_size = size // 2
-        self.matrix = rows * cols
+            for r in range(self.rows):
+                for c in range(self.cols):
+                    # Draw grid lines
+                    pygame.draw.rect(self.screen, (0, 0, 0),
+                                     (c * self.cell_size, r * self.cell_size, self.cell_size, self.cell_size), 1)
+                    # Draw pieces
+                    if self.board[r, c] == 1: # Player 1 (Black)
+                        pygame.draw.circle(self.screen, (0, 0, 0),
+                                           (c * self.cell_size + self.cell_size // 2, r * self.cell_size + self.cell_size // 2),
+                                           self.cell_size // 2 - 3)
+                    elif self.board[r, c] == -1: # Player -1 (White)
+                        pygame.draw.circle(self.screen, (255, 255, 255),
+                                           (c * self.cell_size + self.cell_size // 2, r * self.cell_size + self.cell_size // 2),
+                                           self.cell_size // 2 - 3)
+                        pygame.draw.circle(self.screen, (0, 0, 0), # Outline for white pieces
+                                           (c * self.cell_size + self.cell_size // 2, r * self.cell_size + self.cell_size // 2),
+                                           self.cell_size // 2 - 3, 1)
 
-        self.n_to_win = n_to_win
+            pygame.display.flip()
 
-        pygame.init()
-        pygame.display.set_caption(caption)
-        self.screen = pygame.display.set_mode((self.w, self.h))
-        self.screen.fill(Colors.WHITE)
-        self.player_colors = {"w": Colors.WHITE, "b": Colors.BLACK}
-        self.player_names = {"w": "White", "b": "Black"}
-
-        self.reset()
-        self.board = GomokuPosition(rows, cols, n_to_win)
-        self.draw_board()
-
-    # FOR AI
-    ## START
-    
-    def reset(self):
-        self.board = GomokuPosition(self.rows, self.cols, self.n_to_win)
-        self.draw_board()
-
-    def Board(self):
-        return np.asarray(self.board.to_grid())
-  
-
-    def get_state(self):
-        state = self.Board()
-        state = state.reshape(-1)
-        return state
-
-    def take_action(self, index):
-        
-        x, y = self.index_1D_to_2D(index)
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                return
-        
-        # TODO AI TURN
-        # if self.board.last_player() != ai:
-        # move        
-        # self.action(act)
-        
-        done = False
-        # reward = -1
-
-        self.play_step((x,y))
-
-        print(self.board.is_empty(x,y))
-
-        if self.board.is_empty(x,y):
-
-            self.action((x,y))
-            reward = -1
-
-        else:
-            reward = -20
-                    
-
-        if self.board.just_won():
-            reward = 100
-            done = True
-
-        if self.board.is_draw():
-            reward = 0
-            done = True
-
-        return reward, done
-
-    def index_2D_to_1D(self, act):
-      x, y = act
-      return y + self.cols*x
-      
-    def index_1D_to_2D(self, index):
-      y = index % self.cols
-      x = int(index / self.cols)
-
-      return x,y
-
-    #ENDS HERE
-
-
-    def row_lines(self):
-        half = self.half_size
-
-        for y in range(half, self.h - half + self.size, self.size):
-            yield (half, y), (self.w - half, y)
-
-    def col_lines(self):
-        half = self.half_size
-
-        for x in range(half, self.w - half + self.size, self.size):
-            yield (x, half), (x, self.h - half)
-        
-    def draw_background(self):
-        rect = pygame.Rect(0, 0, self.w, self.h)
-        # pygame.draw.rect(self.screen, Colors.BROWN, rect)
-
-    def draw_lines(self):
-        lines = itertools.chain(self.col_lines(), self.row_lines())
-
-        for start, end in lines:
-            pygame.draw.line(
-                self.screen, 
-                Colors.BLACK, 
-                start, 
-                end, 
-                width=2
-            )
-
-    def draw_board(self):
-        self.draw_background()
-        self.draw_lines()
-        
-    def draw_piece(self, row, col):
-        player = self.board.last_player()
-        circle_pos = (
-           col * self.size + self.half_size, 
-           row * self.size + self.half_size,
-        )
-        pygame.draw.circle(
-           self.screen, 
-           self.player_colors[player], 
-           circle_pos, 
-           self.piece_size
-        )
-
-    def show_outcome(self):
-        player = self.player_names[self.board.last_player()]
-        msg = "draw!" if self.board.is_draw() else f"{player} wins!"
-        font_size = self.w // 10
-        font = pygame.font.Font("freesansbold.ttf", font_size)
-        label = font.render(msg, True, Colors.WHITE, Colors.BLACK)
-        x = self.w // 2 - label.get_width() // 2
-        y = self.h // 2 - label.get_height() // 2
-        self.screen.blit(label, (x, y))
-
-    def exit_on_click(self):
-        while True:
+            # Handle window close event during rendering
             for event in pygame.event.get():
-                if (event.type == pygame.QUIT or 
-                        event.type == pygame.MOUSEBUTTONDOWN):
-                    pygame.quit()
-                    return
-
-    def make_move(self, x, y):
-        col = x // self.size
-        row = y // self.size
-        print(row,col)
-        if self.board.move(row, col):
-            self.draw_piece(row, col)
-        
-    def play(self):
-        pygame.time.Clock().tick(10)
-        self.draw_board()
-        pygame.display.update()
-        while not self.board.just_won() and not self.board.is_draw():
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    return
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    self.make_move(*event.pos)
-                    pygame.display.update()                        
-                    print(self.board)
-                    print(self.board.last_player())
-                    print(self.board.just_won())
-
-        self.show_outcome()
-        pygame.display.update()
-        self.exit_on_click()
-
-    def action(self, act):
-        x, y = act
-        if self.board.move(x, y):
-            player = self.board.last_player()
-            circle_pos = (
-            y * self.size + self.half_size, 
-            x * self.size + self.half_size,
-            )
-            pygame.draw.circle(
-            self.screen, 
-            self.player_colors[player], 
-            circle_pos, 
-            self.piece_size
-            )
-
-        self.make_move(x, y)
+                 if event.type == pygame.QUIT:
+                     print("Pygame window closed.")
+                     pygame.quit()
+                     self.pygame_initialized = False # Stop future rendering attempts
 
 
+        except pygame.error as e:
+            print(f"Pygame rendering error: {e}. Disabling rendering.")
+            self.pygame_initialized = False
+            pygame.quit()
 
-if __name__ == "__main__":
-    games = Gomoku(rows=5, cols=5, n_to_win=3)
-    games.action((1,5))
-    games.action((2,5))
-    games.action((1,4))
-    games.action((2,4))
-    games.action((1,3))    
-    games.action((2,3)) 
-    # games.reset()
-    print(games.Board())
-    games.play()
+    def close(self):
+        if self.pygame_initialized:
+            pygame.quit()
+            self.pygame_initialized = False
