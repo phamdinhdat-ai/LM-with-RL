@@ -41,14 +41,14 @@ class GomokuEnv(gym.Env):
         reward = 5
         if self.board[row, col] != 0:
             print("Invalid move")
-            reward = -200
+            reward = -50
             return self.board.copy(), reward, True, False, {}
         
         self.board[row, col] = self.current_player
         done, winner = self.check_winner(row, col)
         
         if done:
-            reward = 50 if winner == self.current_player else -100
+            reward = 100 if winner == self.current_player else -50
             return self.board.copy(), reward, True, False, {}
         
         if np.all(self.board != 0):
